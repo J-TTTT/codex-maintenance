@@ -1,0 +1,7 @@
+# Local diagnostic artifacts must not be committed.
+model-refresh.*/
+models_cache.json*
+*.log
+auth.json
+.env
+.env.*
