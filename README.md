@@ -21,7 +21,7 @@ bash refresh-codex.sh --skip-update
 bash refresh-codex.sh --model gpt-6-astra
 ```
 
-依赖：Linux、Bash、Node.js、Codex CLI、flock、timeout。无需 rg 或 jq。
+兼容 npm 和官方 standalone 两种 Codex 安装。只有 standalone 安装会执行 `app-server daemon stop/start`；npm 安装会跳过该命令，避免出现 `managed standalone Codex install not found`。依赖：Linux、Bash、Node.js、Codex CLI、flock、timeout。无需 rg 或 jq。
 
 详细流程、回滚和故障分析见 [完整攻略](refresh-codex_README.md)。攻略中的绝对路径是原部署示例，请替换为你自己的克隆目录。
 

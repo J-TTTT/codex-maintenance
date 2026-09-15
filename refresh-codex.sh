@@ -29,7 +29,19 @@ task_codex_dir=${CODEX_HOME:-"$HOME/.codex"}
 task_codex_dir=$(cd -- "$task_codex_dir" && pwd -P)
 [[ "$task_codex_dir" != / && "$task_codex_dir" != "$HOME" ]] || exit 2
 task_cache="$task_codex_dir/models_cache.json"
+task_standalone="$task_codex_dir/packages/standalone/current/codex"
 [[ ! -L "$task_cache" ]] || { echo '缓存是符号链接，请人工检查。'; exit 2; }
+
+codex_command=$(command -v codex)
+codex_real=$(readlink -f "$codex_command" 2>/dev/null || printf '%s' "$codex_command")
+standalone_real=$(readlink -f "$task_standalone" 2>/dev/null || true)
+if [[ -n "$standalone_real" && "$codex_real" == "$standalone_real" ]]; then
+  install_mode=standalone
+elif [[ "$codex_real" == */node_modules/@openai/* || "$codex_real" == */node_modules/@openai/codex/* ]]; then
+  install_mode=npm
+else
+  install_mode=other
+fi
 
 # Inspect only executables named codex owned by this user; never match command text.
 scan_processes() {
@@ -45,6 +57,8 @@ scan_processes() {
   done
 }
 echo "配置目录: $task_codex_dir"
+echo "安装方式: $install_mode"
+echo "当前命令: $codex_command"
 codex --version
 echo '当前用户的 Codex 二进制进程（PID / 启动标识 / 路径）：'
 scan_processes
@@ -73,6 +87,7 @@ flock -n 9 || { echo '另一个刷新脚本正在运行。'; exit 2; }
 task_backup=$(mktemp -d "$task_codex_dir/model-refresh.XXXXXXXX")
 echo "备份和诊断目录: $task_backup"
 cache_moved=0
+failed_stage=初始化
 restore_on_error() {
   local result=$?
   if ((result != 0)); then
@@ -80,12 +95,31 @@ restore_on_error() {
       cp -p -- "$task_backup/models_cache.json" "$task_cache"
       echo '刷新失败，已恢复原缓存。'
     fi
-    echo "未完成；请查看 $task_backup。后台可能处于停止状态，可运行 codex app-server daemon start。"
+    echo "失败阶段: $failed_stage"
+    echo "未完成；请查看 $task_backup。"
+    if [[ "$install_mode" == standalone ]]; then
+      echo 'standalone 后台可能处于停止状态，可运行 codex app-server daemon start。'
+    else
+      echo '当前不是 standalone 安装，无需也不能运行 codex app-server daemon start；直接重新启动 codex。'
+    fi
   fi
 }
 trap restore_on_error EXIT
-timeout 20s codex app-server daemon version >"$task_backup/versions-before.json" 2>"$task_backup/versions-before.err" || true
-timeout 30s codex app-server daemon stop >"$task_backup/stop.log" 2>&1 || echo '后台停止命令未成功，继续检查实际进程。'
+show_failure() {
+  local log=$1
+  [[ -s "$log" ]] && { echo "错误摘要（$log）："; tail -n 30 "$log"; }
+}
+if [[ "$install_mode" == standalone ]]; then
+  timeout 20s codex app-server daemon version >"$task_backup/versions-before.json" 2>"$task_backup/versions-before.err" || true
+  if ! timeout 30s codex app-server daemon stop >"$task_backup/stop.log" 2>&1; then
+    echo 'standalone 后台停止命令未成功，继续检查实际进程。'
+    show_failure "$task_backup/stop.log"
+  fi
+else
+  printf '{"install_mode":"%s","codex":"%s"}\n' "$install_mode" "$codex_command" >"$task_backup/versions-before.json"
+  echo '检测到 npm/其他非 standalone 安装：跳过 daemon stop/start，改由进程检查处理。'
+fi
+failed_stage=停止旧进程
 scan_processes >"$task_backup/processes.tsv"
 while IFS=$'\t' read -r pid started exe; do
   [[ -n "$pid" ]] || continue
@@ -103,20 +137,53 @@ for ((attempt=0; attempt<15; attempt++)); do
 done
 [[ -z "$remaining" ]] || { echo '仍有 Codex 进程或自动重连；请关闭对应客户端后重试。'; printf '%s\n' "$remaining"; exit 1; }
 if ((!skip_update)); then
+  failed_stage=更新CLI
   codex update
   hash -r
 fi
+failed_stage=验证更新后的CLI
+codex_command=$(command -v codex)
+echo "更新后命令: $codex_command"
 codex --version
 # An app may reconnect during the update. Do not alter its active cache.
-[[ -z $(scan_processes) ]] || { echo '更新期间客户端重新连接，请退出该客户端后重试。'; exit 1; }
+remaining=$(scan_processes)
+[[ -z "$remaining" ]] || {
+  echo '更新期间客户端重新连接，请退出该客户端后重试：'
+  printf '%s\n' "$remaining"
+  exit 1
+}
+failed_stage=备份模型缓存
 if [[ -f "$task_cache" ]]; then
   mv -- "$task_cache" "$task_backup/models_cache.json"
   cache_moved=1
 fi
-timeout 60s codex debug models --bundled >"$task_backup/bundled.json" 2>"$task_backup/bundled.err"
-timeout 90s codex debug models >"$task_backup/refreshed.json" 2>"$task_backup/refreshed.err"
-timeout 30s codex app-server daemon start >"$task_backup/start.log" 2>&1
-timeout 20s codex app-server daemon version >"$task_backup/versions-after.json" 2>"$task_backup/versions-after.err" || true
-node "$script_dir/report-models.cjs" "$target_model" "$task_backup/bundled.json" "$task_backup/refreshed.json" "$task_cache"
+failed_stage=读取内置模型目录
+if ! timeout 60s codex debug models --bundled >"$task_backup/bundled.json" 2>"$task_backup/bundled.err"; then
+  show_failure "$task_backup/bundled.err"
+  exit 1
+fi
+failed_stage=刷新服务端模型目录
+if ! timeout 90s codex debug models >"$task_backup/refreshed.json" 2>"$task_backup/refreshed.err"; then
+  show_failure "$task_backup/refreshed.err"
+  exit 1
+fi
+if [[ "$install_mode" == standalone ]]; then
+  failed_stage=启动standalone后台
+  if ! timeout 30s codex app-server daemon start >"$task_backup/start.log" 2>&1; then
+    show_failure "$task_backup/start.log"
+    exit 1
+  fi
+  timeout 20s codex app-server daemon version >"$task_backup/versions-after.json" 2>"$task_backup/versions-after.err" || true
+else
+  echo '非 standalone 安装：跳过 daemon start。下一次运行 codex 时会启动所需进程。' >"$task_backup/start.log"
+  printf '{"install_mode":"%s","codex":"%s"}\n' "$install_mode" "$codex_command" >"$task_backup/versions-after.json"
+fi
+failed_stage=核对模型目录
+if ! node "$script_dir/report-models.cjs" "$target_model" "$task_backup/bundled.json" "$task_backup/refreshed.json" "$task_cache"; then
+  echo '刷新命令已执行，但尚未确认目标模型进入可见磁盘缓存。'
+  show_failure "$task_backup/refreshed.err"
+  exit 3
+fi
+failed_stage=完成
 echo "诊断已完成，以上结果不代表 UI 或账号调用权限验证通过。日志: $task_backup"
 echo '现在可恢复原会话：codex resume（选择对应会话），并用 /model 检查列表。'
