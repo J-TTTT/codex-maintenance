@@ -74,7 +74,7 @@ codex resume SESSION_ID -m gpt-6-astra -c 'model_reasoning_effort="high"'
 - 缓存有且可见但 UI 没有：检查 UI 实际连接的服务器、用户和配置目录，重连后再次验证。
 - `rg: command not found`：只表示普通终端没有该工具；Codex 的工具环境 PATH 可能不同。脚本不依赖它。
 
-如需回滚缓存，先退出相关客户端并停止后台，再把脚本输出目录里的 `models_cache.json` 复制回原配置目录。脚本失败且没有生成替代缓存时会自动恢复旧缓存；不会覆盖失败过程中已生成的新缓存。standalone 后台若保持停止，可运行 `codex app-server daemon start`；npm 安装不要运行该命令，直接重新启动 `codex`。
+如需回滚缓存，先退出相关客户端并停止后台，再把脚本输出目录里的 `models_cache.json` 复制回原配置目录。脚本失败且没有生成替代缓存时会自动恢复旧缓存；不会覆盖失败过程中已生成的新缓存。standalone 安装在恢复旧缓存后会自动重启后台，使其重新载入缓存；如果重启失败，可运行 `codex app-server daemon start`。npm 安装直接重新启动 `codex`。
 
 ## npm 安装的特殊说明
 

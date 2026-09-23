@@ -90,15 +90,25 @@ cache_moved=0
 failed_stage=初始化
 restore_on_error() {
   local result=$?
+  local cache_restored=0
   if ((result != 0)); then
     if ((cache_moved)) && [[ ! -e "$task_cache" ]]; then
       cp -p -- "$task_backup/models_cache.json" "$task_cache"
+      cache_restored=1
       echo '刷新失败，已恢复原缓存。'
+    fi
+    if ((cache_restored)) && [[ "$install_mode" == standalone ]]; then
+      if timeout 30s codex app-server daemon restart >"$task_backup/recovery-restart.log" 2>&1; then
+        echo '已在恢复缓存后重启 standalone 后台，使其重新读取旧缓存。'
+      else
+        echo '缓存已恢复，但 standalone 后台重启失败。'
+        show_failure "$task_backup/recovery-restart.log"
+      fi
     fi
     echo "失败阶段: $failed_stage"
     echo "未完成；请查看 $task_backup。"
     if [[ "$install_mode" == standalone ]]; then
-      echo 'standalone 后台可能处于停止状态，可运行 codex app-server daemon start。'
+      echo '如 standalone 后台仍未运行，可执行 codex app-server daemon start。'
     else
       echo '当前不是 standalone 安装，无需也不能运行 codex app-server daemon start；直接重新启动 codex。'
     fi
