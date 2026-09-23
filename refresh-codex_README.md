@@ -28,7 +28,7 @@ bash /home/tangjh/codex-maintenance/refresh-codex.sh --yes
 bash /home/tangjh/codex-maintenance/refresh-codex.sh --model gpt-6-astra
 ```
 
-依赖：Bash、Node.js、Codex、flock、timeout 和常见 Linux 工具。不需要 rg 或 jq。
+依赖：Bash、Python 3、Codex、flock、timeout 和常见 Linux 工具。不需要 Node.js、rg 或 jq。
 
 ## 脚本做什么
 

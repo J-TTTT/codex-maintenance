@@ -20,7 +20,7 @@ while (($#)); do
   esac
 done
 [[ $(uname -s) == Linux ]] || { echo '此脚本仅用于 Linux 服务器。'; exit 2; }
-for dependency in codex node flock timeout; do
+for dependency in codex python3 flock timeout; do
   command -v "$dependency" >/dev/null || { echo "缺少命令: $dependency"; exit 2; }
 done
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -179,7 +179,7 @@ else
   printf '{"install_mode":"%s","codex":"%s"}\n' "$install_mode" "$codex_command" >"$task_backup/versions-after.json"
 fi
 failed_stage=核对模型目录
-if ! node "$script_dir/report-models.cjs" "$target_model" "$task_backup/bundled.json" "$task_backup/refreshed.json" "$task_cache"; then
+if ! python3 "$script_dir/report-models.py" "$target_model" "$task_backup/bundled.json" "$task_backup/refreshed.json" "$task_cache"; then
   echo '刷新命令已执行，但尚未确认目标模型进入可见磁盘缓存。'
   show_failure "$task_backup/refreshed.err"
   exit 3
